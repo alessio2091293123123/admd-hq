@@ -49,6 +49,20 @@ button.on{border-color:var(--cyan);box-shadow:0 0 10px rgba(63,240,255,.5)}
 #tp .x{position:absolute;right:8px;top:8px;padding:5px 7px;font-size:8px}
 #tp select,#tp textarea{width:100%;background:#120822;color:#fff;border:2px solid #5a3a80;font-family:'VT323',monospace;font-size:20px;padding:6px;margin-bottom:8px}
 #tp #tSend{width:100%}
+#tp{width:min(440px,calc(100% - 32px))}
+#tp input{width:100%;background:#120822;color:#fff;border:2px solid #5a3a80;font:20px 'VT323',monospace;padding:6px;margin:4px 0 8px}
+#tp button:disabled{opacity:.5;cursor:wait}
+#tp [hidden]{display:none!important}
+#sendState,#hqCapability{font-size:17px;line-height:1.2;margin:9px 0;color:#cdb8ea}
+#tp .error{color:#ff91ae}
+.server-task{padding:10px 0;border-bottom:1px dashed #5a3a80;overflow-wrap:anywhere}
+.server-task .bn{color:var(--pink)}
+.server-task .st{color:var(--cyan);font-size:17px;margin:5px 0}
+.server-task pre{font:16px/1.35 monospace;white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}
+.server-task summary{cursor:pointer;color:#9effa8}
+#hqAccount{font-size:17px;margin-bottom:12px}
+#hqAccount button{margin-top:8px}
+
 .ti{display:flex;gap:8px;align-items:center;border-bottom:1px dashed #3b1f5c;padding:5px 0}
 .ti .tx{flex:1;line-height:1.1}
 .ti .bn{color:var(--pink)} .ti .st{color:#9a7fbf;font-size:16px}
@@ -80,17 +94,28 @@ button.on{border-color:var(--cyan);box-shadow:0 0 10px rgba(63,240,255,.5)}
 <div id="team" class="hud"></div>
 <div id="tp" class="hud">
   <button class="x" id="tpx">X</button>
+  <h3>HQ ANMELDUNG</h3>
+  <form id="hqLogin">
+    <label for="hqEmail">E-Mail</label><input id="hqEmail" type="email" autocomplete="username" required>
+    <label for="hqPassword">Passwort</label><input id="hqPassword" type="password" autocomplete="current-password" required>
+    <button id="hqSignIn" type="submit">ANMELDEN</button>
+  </form>
+  <div id="hqAccount" hidden><span id="hqAccountName"></span><br><button id="hqSignOut">ABMELDEN</button></div>
+  <p id="hqCapability">Die Agenten erstellen Texte, Code und Prüfberichte. Externe Änderungen sind noch nicht angeschlossen.</p>
   <h3>NEUER AUFTRAG</h3>
   <select id="tBot"></select>
   <textarea id="tText" rows="2" placeholder="z.B. Hero-Text für ein Café schreiben"></textarea>
   <button id="tSend">SENDEN</button>
-  <h3 style="margin-top:12px">OFFENE AUFTRÄGE <span id="feedState"></span></h3>
+  <p id="sendState" role="status" aria-live="polite"></p>
+  <button id="hqRefresh">STATUS AKTUALISIEREN</button>
+  <h3 style="margin-top:12px"><span id="taskListTitle">AUFTRÄGE & ERGEBNISSE</span> <span id="feedState"></span></h3>
   <div id="tList"></div>
 </div>
 
 <script type="importmap">
 {"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
 </script>
+<script type="module" src="./hq-client.mjs"></script>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -882,15 +907,17 @@ function update(dt) {
 
 /* ---------------- AUFTRAGS-UI ---------------- */
 const tp = document.getElementById('tp'), tBot = document.getElementById('tBot'), tText = document.getElementById('tText'), tList = document.getElementById('tList');
-BOTS.filter(b => b.id !== 'stark').forEach(b => { const o = document.createElement('option'); o.value = b.id; o.textContent = `${b.name} – ${b.role}`; tBot.appendChild(o); });
+BOTS.filter(b => b.id !== 'stark').forEach(b => { let o=tBot.querySelector('option[value="'+b.id+'"]'); if(!o){o=document.createElement('option');o.value=b.id;tBot.appendChild(o);}o.textContent=`${b.name} – ${b.role}`; });
 document.getElementById('bTask').onclick = () => tp.classList.toggle('show');
 document.getElementById('tpx').onclick = () => tp.classList.remove('show');
 document.getElementById('tSend').onclick = () => {
   const text = tText.value.trim(); if (!text) { tText.focus(); return; }
+  if (!demo) return window.HQ_CLIENT?.submit();
   startTask(B_(tBot.value), text); tText.value = '';
 };
 tText.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('tSend').click(); } });
 function renderTasks() {
+  if (!demo) { window.HQ_CLIENT?.render(); return; }
   const open = [...tasks.values()].filter(t => t.status !== 'erledigt' && !t.auto);
   document.getElementById('bTask').textContent = open.length ? `+ AUFTRAG (${open.length})` : '+ AUFTRAG';
   tList.innerHTML = open.length ? '' : '<div class="empty">Keine offenen Aufträge.</div>';
@@ -905,8 +932,14 @@ function setDemo(on) {
   demo = !!on; const bm = document.getElementById('bMode');
   bm.textContent = demo ? 'MODUS: DEMO' : 'MODUS: LIVE'; bm.classList.toggle('on', !demo);
   if (!demo) nextDispatch = Infinity; else nextDispatch = T + 1;
+  window.dispatchEvent(new CustomEvent('hq-mode', { detail: demo }));
 }
-document.getElementById('bMode').onclick = () => setDemo(!demo);
+document.getElementById('bMode').onclick = () => {
+  tasks.clear(); pulses.splice(0).forEach(p=>scene.remove(p.m));
+  bots.forEach(b=>{b.state='idle';b.cur=null;b.task=null;b.queue=[];b.chip.visible=false;});
+  setDemo(!demo); if(!demo && window.HQ_SERVER_SNAPSHOT)syncServer(window.HQ_SERVER_SNAPSHOT);
+  renderTasks();
+};
 setDemo(demo);
 
 /* ---------------- SCHNITTSTELLE FÜR AGENTEN ----------------
@@ -921,8 +954,9 @@ setDemo(demo);
 ------------------------------------------------------------- */
 window.ADMD_HQ = {
   bots: BOTS.map(b => b.id),
-  auftrag(bot, text, id) { const b = B_(String(bot).toLowerCase()); if (!b || b.id === 'stark' || !text) return null; return startTask(b, String(text), { id }); },
+  auftrag(bot, text, id) { if (!demo) return null; const b = B_(String(bot).toLowerCase()); if (!b || b.id === 'stark' || !text) return null; return startTask(b, String(text), { id }); },
   fertig(idOderBot, ergebnis) {
+    if (!demo) return false;
     const key = String(idOderBot);
     if (tasks.has(key)) return completeTask(key, ergebnis);
     const b = B_(key.toLowerCase()); return b && b.task ? completeTask(b.task.id, ergebnis) : false;
@@ -931,28 +965,37 @@ window.ADMD_HQ = {
   auftraege: () => [...tasks.values()].map(t => ({ ...t })),
 };
 window.addEventListener('message', e => {
+  if (e.origin !== location.origin || !demo) return;
   const d = e.data; if (!d || d.admd !== 1) return;
   if (d.typ === 'auftrag') window.ADMD_HQ.auftrag(d.bot, d.text, d.id);
   else if (d.typ === 'fertig') window.ADMD_HQ.fertig(d.id || d.bot, d.ergebnis);
   else if (d.typ === 'demo') setDemo(d.an);
 });
-const feedUrl = params.get('feed');
-if (feedUrl) {
-  const seen = new Map(), fs = document.getElementById('feedState');
-  const poll = async () => {
-    try {
-      const r = await fetch(feedUrl, { cache:'no-store' }); const j = await r.json();
-      for (const a of (j.auftraege || [])) {
-        const prev = seen.get(String(a.id));
-        if (prev === undefined && a.status !== 'erledigt') window.ADMD_HQ.auftrag(a.bot, a.text, a.id);
-        if (a.status === 'erledigt' && prev !== 'erledigt' && tasks.has(String(a.id))) completeTask(a.id, a.ergebnis);
-        seen.set(String(a.id), a.status);
-      }
-      fs.textContent = '· FEED OK'; fs.style.color = '#39ff7a';
-    } catch (e) { fs.textContent = '· FEED FEHLT'; fs.style.color = '#ff2040'; }
-  };
-  poll(); setInterval(poll, 5000);
+// Server status is authoritative in live mode. Animation does not complete jobs.
+function syncServer(data) {
+  if (demo) return;
+  const previous = new Map([...tasks.values()].map(t => [t.id, t.status]));
+  tasks.clear();
+  bots.forEach(b => { b.state='idle'; b.cur=null; b.task=null; b.queue=[]; b.chip.visible=false; });
+  pulses.splice(0).forEach(p => scene.remove(p.m));
+  for (const task of data.auftraege || []) {
+    tasks.set(task.id, { ...task, server:true });
+    const b=B_(task.bot); if (!b || b.id==='stark') continue;
+    if (task.status==='laeuft' && !task.error && !b.cur) {
+      b.state='busy'; b.busyUntil=Infinity; b.cur=task.text;
+      b.chip.userData.draw('▶ '+task.text.toUpperCase(), '#ff3fa8', '#ffffff'); b.chip.visible=true;
+      if (previous.get(task.id)!=='laeuft') spawnPulse(b,1);
+    }
+    if (task.status==='erledigt' && previous.get(task.id)==='laeuft') {
+      log(`<span class="ok">${b.name} ✓</span> ${esc(task.text)}`); spawnPulse(b,-1);
+    }
+  }
+  done=(data.auftraege || []).filter(t=>t.status==='erledigt').length;
+  document.getElementById('done').textContent=done;
+  updateNow();
 }
+window.addEventListener('hq-snapshot', e => syncServer(e.detail));
+if (window.HQ_SERVER_SNAPSHOT) syncServer(window.HQ_SERVER_SNAPSHOT);
 renderTasks();
 
 /* ---------------- CAMERA ---------------- */
@@ -1003,3 +1046,5 @@ renderer.setAnimationLoop(() => {
 </script>
 </body>
 </html>
+
+
