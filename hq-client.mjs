@@ -166,6 +166,7 @@ for(const [id,name]of Object.entries(names))if(!$('tBot').querySelector('option[
  const option=node('option',name);option.value=id;$('tBot').append(option);
 }
 if(pending){$('tText').value=pending.text;$('tBot').value=pending.bot;}
+$('loading')?.remove();
 render();poll();setInterval(poll,5000);
 
 

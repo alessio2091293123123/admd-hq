@@ -1035,7 +1035,7 @@ cameraGoal(); camera.position.copy(desPos); controls.target.copy(desTgt);
 screens.forEach(s => { if (!s.static) { SCR[s.type](s.ctx, s.st, 0); s.t.needsUpdate = true; } });
 city.draw(0); flow.draw(0);
 setInterval(() => { document.getElementById('clock').textContent = new Date().toTimeString().slice(0, 8); updateNow(); }, 1000);
-document.getElementById('loading').remove();
+document.getElementById('loading')?.remove();
 log('<span class="a">STARK:</span> Guten Morgen Team, los geht’s!');
 const clk = new THREE.Clock();
 renderer.setAnimationLoop(() => {
