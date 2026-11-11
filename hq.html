@@ -81,6 +81,7 @@ button.on{border-color:var(--cyan);box-shadow:0 0 10px rgba(63,240,255,.5)}
 <div id="tp" class="hud">
   <button class="x" id="tpx">X</button>
   <h3>NEUER AUFTRAG</h3>
+  <div id="writeState" class="empty" style="margin-bottom:8px"></div>
   <select id="tBot"></select>
   <textarea id="tText" rows="2" placeholder="z.B. Hero-Text für ein Café schreiben"></textarea>
   <button id="tSend">SENDEN</button>
@@ -882,12 +883,14 @@ function update(dt) {
 
 /* ---------------- AUFTRAGS-UI ---------------- */
 const tp = document.getElementById('tp'), tBot = document.getElementById('tBot'), tText = document.getElementById('tText'), tList = document.getElementById('tList');
+const writeState = document.getElementById('writeState'), sendButton = document.getElementById('tSend');
 BOTS.filter(b => b.id !== 'stark').forEach(b => { const o = document.createElement('option'); o.value = b.id; o.textContent = `${b.name} – ${b.role}`; tBot.appendChild(o); });
 document.getElementById('bTask').onclick = () => tp.classList.toggle('show');
 document.getElementById('tpx').onclick = () => tp.classList.remove('show');
 document.getElementById('tSend').onclick = () => {
   const text = tText.value.trim(); if (!text) { tText.focus(); return; }
   startTask(B_(tBot.value), text); tText.value = '';
+  if (!demo) { writeState.textContent = 'Nur lokal sichtbar – nicht in Supabase gespeichert.'; writeState.style.color = '#ffd23f'; }
 };
 tText.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('tSend').click(); } });
 function renderTasks() {
@@ -897,7 +900,7 @@ function renderTasks() {
   open.forEach(t => {
     const row = document.createElement('div'); row.className = 'ti';
     row.innerHTML = `<div class="tx"><span class="bn">${byId[t.bot].name}</span> ${esc(t.text)}<br><span class="st">${t.status === 'laeuft' ? 'läuft' : 'wartet'}</span></div>`;
-    const ok = document.createElement('button'); ok.textContent = 'FERTIG'; ok.onclick = () => completeTask(t.id);
+    const ok = document.createElement('button'); ok.textContent = demo ? 'FERTIG' : 'LOKAL FERTIG'; ok.onclick = () => completeTask(t.id);
     row.appendChild(ok); tList.appendChild(row);
   });
 }
@@ -905,6 +908,10 @@ function setDemo(on) {
   demo = !!on; const bm = document.getElementById('bMode');
   bm.textContent = demo ? 'MODUS: DEMO' : 'MODUS: LIVE'; bm.classList.toggle('on', !demo);
   if (!demo) nextDispatch = Infinity; else nextDispatch = T + 1;
+  sendButton.textContent = demo ? 'SENDEN' : 'LOKAL TESTEN';
+  writeState.textContent = demo ? 'Demo-Aufträge laufen nur im Browser.' : 'Feed: nur lesen. Neue Aufträge werden NICHT in Supabase gespeichert.';
+  writeState.style.color = demo ? '#9a7fbf' : '#ffd23f';
+  renderTasks();
 }
 document.getElementById('bMode').onclick = () => setDemo(!demo);
 setDemo(demo);
@@ -941,12 +948,25 @@ if (feedUrl) {
   const seen = new Map(), fs = document.getElementById('feedState');
   const poll = async () => {
     try {
-      const r = await fetch(feedUrl, { cache:'no-store' }); const j = await r.json();
-      for (const a of (j.auftraege || [])) {
-        const prev = seen.get(String(a.id));
-        if (prev === undefined && a.status !== 'erledigt') window.ADMD_HQ.auftrag(a.bot, a.text, a.id);
-        if (a.status === 'erledigt' && prev !== 'erledigt' && tasks.has(String(a.id))) completeTask(a.id, a.ergebnis);
-        seen.set(String(a.id), a.status);
+      const r = await fetch(feedUrl, { cache:'no-store' });
+      if (!r.ok) throw new Error('Feed HTTP ' + r.status);
+      const j = await r.json();
+      if (!j || !Array.isArray(j.auftraege)) throw new Error('Ungültiges Feed-Format');
+      for (const a of j.auftraege) {
+        if (!a || !a.id || !byId[a.bot] || a.bot === 'stark' || typeof a.text !== 'string') continue;
+        const id = String(a.id), prev = seen.get(id);
+        if (a.status === 'erledigt') {
+          if (!tasks.has(id)) {
+            tasks.set(id, { id, bot:a.bot, text:a.text, status:'erledigt', ergebnis:a.ergebnis, auto:false, external:true });
+            done++; document.getElementById('done').textContent = done;
+            renderTasks();
+          } else if (prev !== 'erledigt') {
+            completeTask(id, a.ergebnis);
+          }
+        } else if ((a.status === 'offen' || a.status === 'laeuft') && !tasks.has(id)) {
+          window.ADMD_HQ.auftrag(a.bot, a.text, id);
+        }
+        seen.set(id, a.status);
       }
       fs.textContent = '· FEED OK'; fs.style.color = '#39ff7a';
     } catch (e) { fs.textContent = '· FEED FEHLT'; fs.style.color = '#ff2040'; }
